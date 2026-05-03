@@ -9,7 +9,6 @@
   },
   "categories": [
     "AI",
-    "Chat",
     "Other"
   ],
   "activationEvents": [
@@ -17,16 +16,32 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "chatParticipants": [
-      {
-        "id": "swirlock-agent.chat",
-        "name": "swirlock",
-        "fullName": "Swirlock Agent",
-        "description": "Local autonomous coding agent",
-        "isSticky": true
-      }
-    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "swirlock-agent",
+          "title": "Swirlock Agent",
+          "icon": "resources/swirlock.svg"
+        }
+      ]
+    },
+    "views": {
+      "swirlock-agent": [
+        {
+          "type": "webview",
+          "id": "swirlock-agent.agentView",
+          "name": "Agent",
+          "icon": "resources/swirlock.svg",
+          "contextualTitle": "Swirlock Agent"
+        }
+      ]
+    },
     "commands": [
+      {
+        "command": "swirlock-agent.open",
+        "title": "Swirlock: Open Agent Panel",
+        "icon": "resources/swirlock.svg"
+      },
       {
         "command": "swirlock-agent.stop",
         "title": "Swirlock: Stop Current Run"
@@ -53,7 +68,7 @@
       "properties": {
         "swirlock-agent.host.baseUrl": {
           "type": "string",
-          "default": "http://localhost:5050",
+          "default": "http://localhost:3000",
           "description": "Base URL of the swirlock-llm-host service. WebSocket endpoint is upgraded from this."
         },
         "swirlock-agent.host.modelId": {
@@ -73,13 +88,18 @@
         },
         "swirlock-agent.permissionMode": {
           "type": "string",
-          "enum": ["normal", "bypass"],
+          "enum": [
+            "normal",
+            "bypass"
+          ],
           "default": "normal",
           "description": "normal enforces path jail and command policy. bypass disables both. Iteration cap and kill switch always apply."
         },
         "swirlock-agent.command.allowList": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [
             "^npm( |$)",
             "^pnpm( |$)",
@@ -118,7 +138,9 @@
         },
         "swirlock-agent.command.denyList": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [
             "rm\\s+-rf\\s+/",
             "rm\\s+-rf\\s+~",
@@ -146,7 +168,13 @@
         },
         "swirlock-agent.shell": {
           "type": "string",
-          "enum": ["auto", "pwsh", "powershell", "bash", "sh"],
+          "enum": [
+            "auto",
+            "pwsh",
+            "powershell",
+            "bash",
+            "sh"
+          ],
           "default": "auto",
           "description": "Shell used for run_command. auto picks per platform."
         },
@@ -158,9 +186,33 @@
         "swirlock-agent.streaming.showThinking": {
           "type": "boolean",
           "default": true,
-          "description": "Surface the model's thinking events in the chat panel."
+          "description": "Surface the model's thinking events in the agent panel."
         }
       }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "swirlock-agent.preloadModel",
+          "when": "view == swirlock-agent.agentView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "swirlock-agent.togglePermissionMode",
+          "when": "view == swirlock-agent.agentView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "swirlock-agent.openRunLog",
+          "when": "view == swirlock-agent.agentView",
+          "group": "1_logs"
+        },
+        {
+          "command": "swirlock-agent.showStatus",
+          "when": "view == swirlock-agent.agentView",
+          "group": "1_logs"
+        }
+      ]
     }
   },
   "scripts": {
@@ -175,20 +227,21 @@
     "test": "vscode-test"
   },
   "dependencies": {
+    "marked": "^15.0.12",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/vscode": "^1.118.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
+    "@types/vscode": "^1.118.0",
     "@types/ws": "^8.5.13",
-    "typescript-eslint": "^8.56.1",
-    "eslint": "^9.39.3",
-    "typescript": "^5.9.3",
-    "ts-loader": "^9.5.4",
-    "webpack": "^5.105.3",
-    "webpack-cli": "^6.0.1",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.3",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1",
+    "webpack": "^5.105.3",
+    "webpack-cli": "^6.0.1"
   }
 }

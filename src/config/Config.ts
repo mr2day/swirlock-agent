@@ -32,7 +32,7 @@ export function readConfig(): SwirlockConfig {
     const cfg = vscode.workspace.getConfiguration(SECTION);
     return {
         host: {
-            baseUrl: cfg.get<string>('host.baseUrl', 'http://localhost:5050'),
+            baseUrl: cfg.get<string>('host.baseUrl', 'http://localhost:3000'),
             modelId: cfg.get<string>('host.modelId', ''),
             callerService: cfg.get<string>('host.callerService', 'swirlock-agent'),
             priority: cfg.get<number>('host.priority', 1),

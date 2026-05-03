@@ -11,35 +11,43 @@ The model host contract is owned by [`swirlock-chatbot-contracts`](../RAG%20engi
 ## Architecture
 
 ```
-VS Code Chat (vscode.chat participant)
-         ↓
-   AgentLoop  ─────►  Plan  (first-class state)
-         │
-         ├─►  ContextManager  (priorities, eviction, token budget)
-         │           │
-         │           ▼
-         │     PromptAssembler  →  InferenceInput.parts[]
-         │           │
-         │           ▼
-         │     ModelHostClient  ──HTTP / WebSocket──►  swirlock-llm-host
-         │           │
-         │           ▼  (chunks, queue events, thinking)
-         │     ChatResponseStream  →  user-facing UI
-         │
-         ├─►  ActionParser   (JSON action blocks from model output)
-         │
-         ├─►  ToolRegistry
-         │       ├─ FileTools     (vscode.workspace.fs)
-         │       ├─ ShellTool     (Node child_process via PathJail/CommandPolicy)
-         │       ├─ GitTool       (git CLI)
-         │       └─ WorkspaceTool (diagnostics, search, structure)
-         │
-         ├─►  SafetyLayer  (PathJail · CommandPolicy · PermissionMode · IterationCap · KillSwitch)
-         │
-         └─►  RunLogger    (.swirlock/runs/<turnId>.jsonl)
+Activity Bar  ──►  AgentView  (WebviewViewProvider)
+                       │   ▲
+                       │   │ ExtensionMessage / WebviewMessage
+                       ▼   │
+                    webview/main.ts (DOM + marked, sandboxed webview)
+
+   AgentView  ──►  AgentLoop  (drives one task at a time)
+                       │
+                       ├─►  AgentSink  (interface: chunks, actions, plan, outcome)
+                       │       implemented by AgentView → posts to webview
+                       │
+                       ├─►  Plan  (first-class state)
+                       │
+                       ├─►  ContextManager  (priorities, eviction, token budget)
+                       │           │
+                       │           ▼
+                       │     PromptAssembler  →  InferenceInput.parts[]
+                       │           │
+                       │           ▼
+                       │     ModelHostClient  ──HTTP / WebSocket──►  swirlock-llm-host
+                       │           │
+                       │           ▼  (chunks, queue events, thinking)
+                       │         AgentSink (back to webview)
+                       │
+                       ├─►  ActionParser   (JSON action blocks from model output)
+                       │
+                       ├─►  ToolRegistry
+                       │       ├─ FileTools     (vscode.workspace.fs)
+                       │       ├─ ShellTool     (Node child_process via PathJail/CommandPolicy)
+                       │       └─ GitTool       (git CLI)
+                       │
+                       ├─►  SafetyLayer  (PathJail · CommandPolicy · PermissionMode · IterationCap · KillSwitch)
+                       │
+                       └─►  RunLogger    (.swirlock/runs/<turnId>.jsonl)
 ```
 
-The arrow direction matters: nothing below the agent loop knows about the chat participant; nothing inside `ModelHostClient` knows about agent semantics; nothing inside `PromptAssembler` knows about HTTP. Each layer is replaceable.
+The arrow direction matters: nothing below `AgentLoop` knows about the webview; nothing inside `ModelHostClient` knows about agent semantics; nothing inside `PromptAssembler` knows about HTTP. The UI is just one `AgentSink` implementation — the loop could be driven from a CLI or a test harness without touching its internals.
 
 ## Core principles
 
@@ -110,16 +118,21 @@ Each tool is a deterministic function from `(args, ctx) → ToolResult`. Tools n
 - **IterationCap** — hard maximum loop iterations per task. Always enforced, even in bypass mode.
 - **KillSwitch** — `vscode.CancellationToken` threaded through the agent loop, the WebSocket stream, and every tool invocation. Triggered by the chat panel's stop button or the `swirlock-agent.stop` command.
 
-### `ui/ChatParticipant`
+### `agent/AgentSink`
 
-A `vscode.chat.createChatParticipant` registration. The user invokes the agent by typing `@swirlock <task>` in the VS Code chat panel. The participant streams the model's text output as it arrives, surfaces queue position when the host is busy, renders tool execution as collapsible markdown blocks, and exposes a stop button that triggers the kill switch.
+Output surface for one agent task. The loop writes events here (`progress`, `assistantChunk`, `assistantThinking`, `actionStarted`, `actionFinished`, `planUpdate`, `queued`, `message`); the UI layer renders them. Decouples the loop from any specific UI — the same loop can drive a webview, a CLI, or a test harness.
 
-### `ui/StatusBar`
+### `ui/AgentView`
 
-Two items:
+A `WebviewViewProvider` registered in the `swirlock-agent` activity-bar container. Owns one `vscode.WebviewView`, generates the HTML with a strict CSP and a script nonce, runs one task at a time, and bridges the two-way protocol between the webview and the agent loop. Implements `AgentSink` by posting `ExtensionMessage` payloads to the webview.
 
-1. Model host status (`● ready` / `◐ loading` / `○ unreachable`) — clickable to preload.
-2. Permission mode (`🛡 normal` / `⚡ bypass`) — clickable to toggle.
+### `webview/main.ts`
+
+The webview-side controller. Renders the chat UI: header (host status pill, mode pill, action buttons), plan banner, message list, action strip per assistant turn, input box. Streams assistant chunks as markdown via `marked`, and posts `WebviewMessage` payloads back to the extension. Bundled separately by webpack with a `web` target and DOM lib.
+
+### `webview/protocol.ts`
+
+The shared wire protocol: `ExtensionMessage` (extension → webview) and `WebviewMessage` (webview → extension). Imported by both sides; pure types, no VS Code or DOM imports.
 
 ### `ui/RunLogger`
 
@@ -142,7 +155,7 @@ All configuration is exposed under `swirlock-agent.*` in VS Code settings. The d
 
 | Setting | Default |
 |---|---|
-| `host.baseUrl` | `http://localhost:5050` |
+| `host.baseUrl` | `http://localhost:3000` |
 | `host.modelId` | `""` (use host default) |
 | `host.callerService` | `swirlock-agent` |
 | `host.priority` | `1` |

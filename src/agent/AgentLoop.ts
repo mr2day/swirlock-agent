@@ -4,7 +4,7 @@ import { ModelHostClient } from '../transport/ModelHostClient';
 import { ContextManager } from '../context/ContextManager';
 import { PromptAssembler } from '../prompt/PromptAssembler';
 import { Plan } from './Plan';
-import { Action, parseActions } from './actions';
+import { parseActions } from './actions';
 import { ToolRegistry } from '../tools/ToolRegistry';
 import { ToolContext } from '../tools/Tool';
 import { PathJail } from '../safety/pathJail';
@@ -16,6 +16,7 @@ import { CancelledError, throwIfCancelled } from '../util/cancellation';
 import { uuidv7 } from '../util/uuid';
 import { ModelHostError, StreamEvent } from '../transport/contracts';
 import { log } from '../util/logger';
+import { AgentSink } from './AgentSink';
 
 export interface AgentLoopDeps {
     client: ModelHostClient;
@@ -30,7 +31,7 @@ export interface AgentLoopDeps {
 export interface AgentRunOptions {
     task: string;
     correlationId?: string;
-    response: vscode.ChatResponseStream;
+    sink: AgentSink;
     token: vscode.CancellationToken;
     runLog: RunLogger;
 }
@@ -43,14 +44,18 @@ export type AgentOutcome =
 
 /**
  * Receives a task, drives the model→action→tool loop until finish, max
- * iterations, cancellation, or fatal error. Streams output to the chat
- * response stream as it goes.
+ * iterations, cancellation, or fatal error. Writes events to an AgentSink
+ * which the UI layer renders however it wants.
  */
 export class AgentLoop {
     constructor(private readonly deps: AgentLoopDeps) {}
 
+    updateConfig(config: SwirlockConfig): void {
+        (this.deps as { config: SwirlockConfig }).config = config;
+    }
+
     async run(opts: AgentRunOptions): Promise<AgentOutcome> {
-        const { task, response, token, runLog } = opts;
+        const { task, sink, token, runLog } = opts;
         const correlationId = opts.correlationId ?? uuidv7();
 
         const context = new ContextManager();
@@ -107,42 +112,15 @@ export class AgentLoop {
                     requestPartCount: request.input.parts.length,
                 });
 
-                response.progress(`Iteration ${iterations}…`);
+                sink.progress(`Iteration ${iterations}…`);
 
                 let modelText = '';
-                let queuedShown = false;
-                let assistantHeadingShown = false;
 
                 try {
                     for await (const ev of this.deps.client.stream(request, token, correlationId)) {
                         throwIfCancelled(token);
-                        this.handleStreamEvent(ev, response, {
-                            onChunk: (text) => {
-                                if (!assistantHeadingShown) {
-                                    assistantHeadingShown = true;
-                                }
-                                modelText += text;
-                                response.markdown(text);
-                            },
-                            onQueued: (info) => {
-                                if (!queuedShown) {
-                                    queuedShown = true;
-                                }
-                                response.progress(
-                                    `Queued at position ${info.position} (${info.requestsAhead} ahead)…`,
-                                );
-                            },
-                            onThinking: (text) => {
-                                if (this.deps.config.streaming.showThinking) {
-                                    response.markdown(`\n> _${escapeMd(text)}_\n`);
-                                }
-                            },
-                            onStarted: () => {
-                                response.progress('Generating…');
-                            },
-                            onError: (err) => {
-                                throw err;
-                            },
+                        this.handleStreamEvent(ev, sink, (text) => {
+                            modelText += text;
                         });
                     }
                 } catch (e) {
@@ -155,7 +133,7 @@ export class AgentLoop {
                             code: e.code,
                             message: e.message,
                         });
-                        response.markdown(`\n\n**Model host error:** \`${e.code}\` — ${e.message}\n`);
+                        sink.message(`**Model host error:** \`${e.code}\` — ${e.message}`, 'error');
                         return { kind: 'error', iterations, message: `${e.code}: ${e.message}` };
                     }
                     throw e;
@@ -179,8 +157,9 @@ export class AgentLoop {
                     const summary = parsed.errors
                         .map((e) => `Action #${e.index}: ${e.message}\nRaw:\n${e.raw}`)
                         .join('\n---\n');
-                    response.markdown(
-                        `\n\n_${parsed.errors.length} action block${parsed.errors.length === 1 ? '' : 's'} failed validation; the model will retry._\n`,
+                    sink.message(
+                        `${parsed.errors.length} action block${parsed.errors.length === 1 ? '' : 's'} failed validation; the model will retry.`,
+                        'warn',
                     );
                     context.add({
                         type: 'error',
@@ -205,9 +184,7 @@ export class AgentLoop {
                             '`action` block or a `finish` action. Plain prose without an action is not ' +
                             'progress.',
                     });
-                    response.markdown(
-                        `\n\n_No actions emitted this turn; prompting the model to act._\n`,
-                    );
+                    sink.message('No actions emitted this turn; prompting the model to act.', 'info');
                     continue;
                 }
 
@@ -221,17 +198,13 @@ export class AgentLoop {
                     }
                     if (action.type === 'update_plan') {
                         plan.set(action.plan);
-                        response.markdown(`\n\n**Plan updated.**\n\n${action.plan}\n`);
+                        sink.planUpdate(action.plan);
                         await runLog.event('plan_update', { plan: action.plan });
                         continue;
                     }
-                    response.markdown(`\n\n${actionHeader(action)}\n`);
+                    sink.actionStarted(action);
                     const result = await this.deps.registry.execute(action, toolCtx(token));
-                    response.markdown(
-                        result.error
-                            ? `> ❌ ${escapeMd(result.summary)}\n`
-                            : `> ✓ ${escapeMd(result.summary)}\n`,
-                    );
+                    sink.actionFinished(result.summary, result.error ?? false);
                     await runLog.event('tool_result', {
                         iteration: iterations,
                         action,
@@ -248,96 +221,58 @@ export class AgentLoop {
                 }
 
                 if (sawFinish) {
-                    response.markdown(`\n\n**Done.** ${sawFinish.summary}\n`);
                     await runLog.event('task_finished', { iterations, summary: sawFinish.summary });
                     return { kind: 'finished', iterations, summary: sawFinish.summary };
                 }
             }
 
-            response.markdown(
-                `\n\n**Hit max iterations (${this.deps.config.maxIterations}).** Stopping. Increase ` +
-                    '`swirlock-agent.maxIterations` if the task needs more turns.\n',
+            sink.message(
+                `Hit max iterations (${this.deps.config.maxIterations}). Stopping. Increase ` +
+                    '`swirlock-agent.maxIterations` if the task needs more turns.',
+                'warn',
             );
             await runLog.event('task_max_iterations', { iterations });
             return { kind: 'maxIterations', iterations };
         } catch (e) {
             if (e instanceof CancelledError || (e as Error).name === 'CancelledError') {
-                response.markdown(`\n\n**Cancelled.**\n`);
                 await runLog.event('task_cancelled', { iterations });
                 return { kind: 'cancelled', iterations };
             }
             const message = e instanceof Error ? e.message : String(e);
             log().error(`Agent loop crashed: ${message}`);
-            response.markdown(`\n\n**Agent error:** ${escapeMd(message)}\n`);
+            sink.message(`Agent error: ${message}`, 'error');
             await runLog.event('task_error', { iterations, message });
             return { kind: 'error', iterations, message };
         }
     }
 
-    private handleStreamEvent(
-        ev: StreamEvent,
-        _response: vscode.ChatResponseStream,
-        h: {
-            onChunk: (text: string) => void;
-            onQueued: (info: import('../transport/contracts').QueueWaitInfo) => void;
-            onThinking: (text: string) => void;
-            onStarted: () => void;
-            onError: (err: Error) => void;
-        },
-    ): void {
+    private handleStreamEvent(ev: StreamEvent, sink: AgentSink, onChunkText: (text: string) => void): void {
         switch (ev.type) {
             case 'accepted':
                 return;
             case 'queued':
-                h.onQueued(ev.data);
+                sink.queued(ev.data);
                 return;
             case 'started':
-                h.onStarted();
+                sink.started();
                 return;
             case 'thinking':
-                h.onThinking(ev.data.text);
+                sink.assistantThinking(ev.data.text);
                 return;
             case 'chunk':
-                h.onChunk(ev.data.text);
+                onChunkText(ev.data.text);
+                sink.assistantChunk(ev.data.text);
                 return;
             case 'done':
                 return;
             case 'error':
-                h.onError(
-                    new ModelHostError(
-                        ev.error.code,
-                        ev.error.message,
-                        ev.error.retryable,
-                        ev.error.details,
-                        ev.meta.correlationId,
-                    ),
+                throw new ModelHostError(
+                    ev.error.code,
+                    ev.error.message,
+                    ev.error.retryable,
+                    ev.error.details,
+                    ev.meta.correlationId,
                 );
-                return;
         }
     }
-}
-
-function actionHeader(a: Action): string {
-    switch (a.type) {
-        case 'read_file':
-            return `🔍 read \`${a.path}\``;
-        case 'write_file':
-            return `✏️ write \`${a.path}\``;
-        case 'edit_file':
-            return `✏️ edit \`${a.path}\``;
-        case 'list_dir':
-            return `📂 list \`${a.path}\``;
-        case 'search':
-            return `🔎 search \`${a.query}\`${a.glob ? ` in \`${a.glob}\`` : ''}`;
-        case 'run_command':
-            return `🖥 run \`${a.command}\``;
-        case 'git':
-            return `🔧 git \`${a.args.join(' ')}\``;
-        default:
-            return `• ${a.type}`;
-    }
-}
-
-function escapeMd(s: string): string {
-    return s.replace(/\*/g, '\\*').replace(/_/g, '\\_').replace(/`/g, '\\`');
 }

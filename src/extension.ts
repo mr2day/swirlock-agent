@@ -16,11 +16,8 @@ import {
 import { ShellTool } from './tools/shellTool';
 import { GitTool } from './tools/gitTool';
 import { AgentLoop } from './agent/AgentLoop';
-import { registerChatParticipant } from './ui/ChatParticipant';
-import { StatusBar } from './ui/StatusBar';
+import { AgentView, AGENT_VIEW_ID } from './ui/AgentView';
 import { latestLogPath } from './ui/RunLogger';
-
-let activeCancellation: vscode.CancellationTokenSource | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
     initLogger();
@@ -66,21 +63,20 @@ export function activate(context: vscode.ExtensionContext): void {
         workspaceRoot,
     });
 
-    const statusBar = new StatusBar(client, permission);
-    statusBar.start();
-
-    const participant = registerChatParticipant({
+    const agentView = new AgentView({
         loop,
+        client,
+        permission,
+        extensionUri: context.extensionUri,
         workspaceRoot,
-        setActiveCancellation(src) {
-            activeCancellation = src;
-        },
     });
 
     context.subscriptions.push(
-        statusBar,
         permission,
-        participant,
+        agentView,
+        vscode.window.registerWebviewViewProvider(AGENT_VIEW_ID, agentView, {
+            webviewOptions: { retainContextWhenHidden: true },
+        }),
         onConfigChange(() => {
             config = readConfig();
             client.update({
@@ -89,18 +85,17 @@ export function activate(context: vscode.ExtensionContext): void {
             });
             commandPolicy.update(config.command.allowList, config.command.denyList);
             permission.refresh();
-            // Loop reads current config via the config reference; rebuild it
-            // so future runs pick up new host/iteration/budget settings.
-            (loop as unknown as { deps: { config: typeof config } }).deps.config = config;
+            loop.updateConfig(config);
             log().info('Configuration reloaded.');
         }),
+        vscode.commands.registerCommand('swirlock-agent.open', async () => {
+            await agentView.reveal();
+        }),
         vscode.commands.registerCommand('swirlock-agent.stop', () => {
-            if (activeCancellation) {
-                activeCancellation.cancel();
-                vscode.window.showInformationMessage('Swirlock: stopping current run…');
-            } else {
-                vscode.window.showInformationMessage('Swirlock: no active run.');
-            }
+            const stopped = agentView.stopActive();
+            vscode.window.showInformationMessage(
+                stopped ? 'Swirlock: stopping current run…' : 'Swirlock: no active run.',
+            );
         }),
         vscode.commands.registerCommand('swirlock-agent.togglePermissionMode', async () => {
             const next = await permission.toggle();
@@ -121,7 +116,6 @@ export function activate(context: vscode.ExtensionContext): void {
                         vscode.window.showInformationMessage(
                             `Swirlock model "${res.data.modelId}" status: ${res.data.status ?? 'accepted'}`,
                         );
-                        await statusBar.refresh();
                     },
                 );
             } catch (e) {
@@ -162,8 +156,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-    activeCancellation?.cancel();
-    activeCancellation = null;
+    // No global state. AgentView disposes via the context subscription.
 }
 
 function pickWorkspaceRoot(): string | undefined {
