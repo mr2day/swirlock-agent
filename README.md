@@ -18,10 +18,6 @@ Responsibilities
 
 The agent builds and manages the context window, decides actions based on LLM output, reads and writes files, executes commands, and manages task state and the iteration loop. The LLM host (external) only receives prompts and returns completions, without memory, tools, or planning.
 
-Context Management
-
-The agent constructs a context window dynamically for each LLM call. It includes the current user task, active files, relevant file snippets, recent tool outputs, execution results such as build or test errors, and a compressed history summary. Context is size-limited and prioritized, and older or low-value data is summarized or discarded.
-
 Tooling
 
 The agent operates through local tools: file read/write, diff application, command execution via PowerShell, and git operations. All tools are invoked programmatically by the extension.
@@ -32,4 +28,4 @@ Receive task → build context → call LLM → parse response into actions → 
 
 Environment Assumptions
 
-The agent runs in an isolated workspace or disposable repository, with restricted credentials, no access to sensitive data, and a local LLM available via WebSocket.
+The agent runs in an isolated workspace or disposable repository, with a local LLM available via WebSocket.
