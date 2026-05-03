@@ -1,71 +1,35 @@
-# swirlock-agent README
+swirlock-agent
 
-This is the README for your extension "swirlock-agent". After writing up a brief description, we recommend including the following sections.
+Local autonomous coding agent implemented as a Visual Studio Code extension. It connects to a local LLM host (e.g. swirlock-llm-host) and executes coding tasks directly inside the workspace.
 
-## Features
+Purpose
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+This project provides a self-contained coding agent that runs entirely on the local machine, uses a locally hosted LLM, manages its own context window, and interacts directly with the workspace (files, git, terminal). The LLM is treated strictly as an inference engine. All reasoning, memory, and tool execution are handled by the extension.
 
-For example if there is an image subfolder under your extension project workspace:
+Core Principles
 
-\!\[feature X\]\(images/feature-x.png\)
+Separation of concerns: the LLM host is responsible only for inference, while the agent handles context, planning, and execution. Local-first: no dependency on external APIs and no cloud execution required. Autonomous execution: no human approval loop, runs inside a controlled environment. Deterministic tooling: structured file edits, controlled command execution, and reproducible behavior.
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+Architecture
 
-## Requirements
+VS Code Extension (swirlock-agent) contains the agent loop, context manager, tool layer (file system, terminal/PowerShell, git, workspace inspection), and a WebSocket client that connects to swirlock-llm-host, which in turn runs the local LLM (e.g. gemma4:e4b).
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+Responsibilities
 
-## Extension Settings
+The agent builds and manages the context window, decides actions based on LLM output, reads and writes files, executes commands, and manages task state and the iteration loop. The LLM host (external) only receives prompts and returns completions, without memory, tools, or planning.
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+Context Management
 
-For example:
+The agent constructs a context window dynamically for each LLM call. It includes the current user task, active files, relevant file snippets, recent tool outputs, execution results such as build or test errors, and a compressed history summary. Context is size-limited and prioritized, and older or low-value data is summarized or discarded.
 
-This extension contributes the following settings:
+Tooling
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+The agent operates through local tools: file read/write, diff application, command execution via PowerShell, and git operations. All tools are invoked programmatically by the extension.
 
-## Known Issues
+Execution Model
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+Receive task → build context → call LLM → parse response into actions → execute actions → capture results → update context → repeat until task completion.
 
-## Release Notes
+Environment Assumptions
 
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+The agent runs in an isolated workspace or disposable repository, with restricted credentials, no access to sensitive data, and a local LLM available via WebSocket.
