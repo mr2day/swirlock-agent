@@ -108,3 +108,15 @@ See [MANIFEST.md](MANIFEST.md) for the full architectural rationale and module m
 ## License
 
 TBD.
+
+
+Future installs
+Whenever you change the code, the cycle is:
+
+
+npm run package          # webpack production build
+npx @vscode/vsce package # produces swirlock-agent-0.0.1.vsix
+code --install-extension .\swirlock-agent-0.0.1.vsix
+Then restart VS Code. (Bumping version in package.json is good hygiene per release; VS Code will install the new build over the old one regardless.)
+
+To uninstall: open Extensions (Ctrl+Shift+X), find "Swirlock Agent", click the gear icon, Uninstall.
