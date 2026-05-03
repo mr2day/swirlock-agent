@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 import * as os from 'os';
 import { RunCommandAction } from '../agent/actions';
@@ -20,9 +21,17 @@ export class ShellTool implements Tool<RunCommandAction> {
         }
 
         const cwd = action.cwd ? ctx.pathJail.resolve(action.cwd) : ctx.workspaceRoot;
+
+        if (action.background) {
+            return this.runInTerminal(action, cwd);
+        }
+
         const shell = pickShell(ctx.shell);
         const invocation = buildInvocation(shell, action.command);
-        const timeout = action.timeoutMs ?? 120_000;
+        // 10 minutes default for foreground commands; long enough for builds and
+        // test suites without holding the loop forever. Use background:true for
+        // anything that genuinely runs indefinitely.
+        const timeout = action.timeoutMs ?? 600_000;
 
         return new Promise<ToolResult>((resolve) => {
             const child = spawn(invocation.file, invocation.args, {
@@ -76,7 +85,7 @@ export class ShellTool implements Tool<RunCommandAction> {
                 const status = killed
                     ? 'killed (cancelled)'
                     : timedOut
-                      ? `killed (timeout ${timeout}ms)`
+                      ? `killed (timeout ${timeout}ms — use background:true for long-running commands)`
                       : signal
                         ? `signal ${signal}`
                         : `exit ${code}`;
@@ -94,6 +103,22 @@ export class ShellTool implements Tool<RunCommandAction> {
                 });
             });
         });
+    }
+
+    private async runInTerminal(action: RunCommandAction, cwd: string): Promise<ToolResult> {
+        const name = `Swirlock: ${action.command.slice(0, 30)}${action.command.length > 30 ? '…' : ''}`;
+        const terminal = vscode.window.createTerminal({ name, cwd });
+        terminal.show(true);
+        terminal.sendText(action.command, true);
+        const summary = `started in terminal "${name}" (background)`;
+        const output =
+            `$ ${action.command}\n` +
+            `cwd: ${cwd}\n` +
+            `mode: background\n` +
+            `Process started in a VS Code terminal. The user can see its output ` +
+            `in the terminal panel. Subsequent run_command actions can run while ` +
+            `this process keeps running.`;
+        return { summary, output };
     }
 }
 

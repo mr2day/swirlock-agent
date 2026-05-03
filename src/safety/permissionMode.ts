@@ -27,7 +27,7 @@ export class PermissionModeController {
     }
 
     async toggle(): Promise<PermissionMode> {
-        const next: PermissionMode = this._mode === 'normal' ? 'bypass' : 'normal';
+        const next: PermissionMode = this._mode === 'bypass' ? 'normal' : 'bypass';
         await setPermissionMode(next);
         this._mode = next;
         this._onChange.fire(next);

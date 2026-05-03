@@ -34,6 +34,12 @@ export interface RunCommandAction {
     command: string;
     cwd?: string;
     timeoutMs?: number;
+    /**
+     * Run the command in a detached VS Code terminal window. Returns
+     * immediately. Use for long-running processes such as dev servers
+     * (`ng serve`, `vite`, `next dev`) that should outlive the agent turn.
+     */
+    background?: boolean;
 }
 export interface GitAction {
     type: 'git';
@@ -68,7 +74,9 @@ export const ACTION_SCHEMA_DOC = `
 - edit_file       { "type": "edit_file", "path": "<workspace-relative path>", "oldString": "<exact substring>", "newString": "<replacement>" }
 - list_dir        { "type": "list_dir", "path": "<workspace-relative path or '.'>" }
 - search          { "type": "search", "query": "<regex>", "glob": "<optional file glob>" }
-- run_command     { "type": "run_command", "command": "<shell command>", "cwd": "<optional>", "timeoutMs": <optional number> }
+- run_command     { "type": "run_command", "command": "<shell command>", "cwd": "<optional>", "timeoutMs": <optional number>, "background": <optional boolean> }
+                  Set "background": true for long-running processes like dev servers (ng serve, vite, next dev).
+                  Background commands open a VS Code terminal the user can see and return immediately.
 - git             { "type": "git", "args": ["status"] }
 - update_plan     { "type": "update_plan", "plan": "<markdown plan>" }
 - finish          { "type": "finish", "summary": "<one-paragraph result>" }
@@ -158,6 +166,16 @@ function validate(v: unknown): Validation {
         }
         return x;
     };
+    const optBool = (k: string): boolean | undefined => {
+        const x = obj[k];
+        if (x === undefined || x === null) {
+            return undefined;
+        }
+        if (typeof x !== 'boolean') {
+            throw new Error(`Field "${k}" must be a boolean when present.`);
+        }
+        return x;
+    };
     try {
         switch (t) {
             case 'read_file':
@@ -186,6 +204,7 @@ function validate(v: unknown): Validation {
                         command: reqString('command'),
                         cwd: optString('cwd'),
                         timeoutMs: optNumber('timeoutMs'),
+                        background: optBool('background'),
                     },
                 };
             case 'git': {

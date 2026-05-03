@@ -16,7 +16,7 @@ import {
 import { ShellTool } from './tools/shellTool';
 import { GitTool } from './tools/gitTool';
 import { AgentLoop } from './agent/AgentLoop';
-import { AgentView, AGENT_VIEW_ID } from './ui/AgentView';
+import { AgentPanel } from './ui/AgentPanel';
 import { latestLogPath } from './ui/RunLogger';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -63,7 +63,7 @@ export function activate(context: vscode.ExtensionContext): void {
         workspaceRoot,
     });
 
-    const agentView = new AgentView({
+    const panel = AgentPanel.get({
         loop,
         client,
         permission,
@@ -71,12 +71,23 @@ export function activate(context: vscode.ExtensionContext): void {
         workspaceRoot,
     });
 
+    // Empty TreeView so the activity-bar entry exists. The viewsWelcome
+    // contribution shows a button that runs swirlock-agent.open.
+    const launcherProvider: vscode.TreeDataProvider<never> = {
+        getTreeItem: () => {
+            throw new Error('unreachable');
+        },
+        getChildren: () => [],
+    };
+    const launcherView = vscode.window.createTreeView('swirlock-agent.launcher', {
+        treeDataProvider: launcherProvider,
+        showCollapseAll: false,
+    });
+
     context.subscriptions.push(
         permission,
-        agentView,
-        vscode.window.registerWebviewViewProvider(AGENT_VIEW_ID, agentView, {
-            webviewOptions: { retainContextWhenHidden: true },
-        }),
+        panel,
+        launcherView,
         onConfigChange(() => {
             config = readConfig();
             client.update({
@@ -88,11 +99,11 @@ export function activate(context: vscode.ExtensionContext): void {
             loop.updateConfig(config);
             log().info('Configuration reloaded.');
         }),
-        vscode.commands.registerCommand('swirlock-agent.open', async () => {
-            await agentView.reveal();
+        vscode.commands.registerCommand('swirlock-agent.open', () => {
+            panel.reveal();
         }),
         vscode.commands.registerCommand('swirlock-agent.stop', () => {
-            const stopped = agentView.stopActive();
+            const stopped = panel.stopActive();
             vscode.window.showInformationMessage(
                 stopped ? 'Swirlock: stopping current run…' : 'Swirlock: no active run.',
             );
@@ -156,7 +167,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-    // No global state. AgentView disposes via the context subscription.
+    // No global state. AgentPanel disposes via the context subscription.
 }
 
 function pickWorkspaceRoot(): string | undefined {

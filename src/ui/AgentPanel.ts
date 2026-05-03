@@ -16,9 +16,9 @@ import { Action } from '../agent/actions';
 import { QueueWaitInfo } from '../transport/contracts';
 import { log } from '../util/logger';
 
-export const AGENT_VIEW_ID = 'swirlock-agent.agentView';
+export const AGENT_PANEL_VIEW_TYPE = 'swirlock-agent.panel';
 
-export interface AgentViewDeps {
+export interface AgentPanelDeps {
     loop: AgentLoop;
     client: ModelHostClient;
     permission: PermissionModeController;
@@ -32,53 +32,81 @@ interface ActiveTask {
     cts: vscode.CancellationTokenSource;
 }
 
-export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable {
-    private view: vscode.WebviewView | null = null;
+/**
+ * Singleton webview panel that renders the agent in an editor-area tab —
+ * the same surface as a file. Click the activity-bar icon (or run the
+ * "Swirlock: Open Agent Panel" command) to open or focus it.
+ */
+export class AgentPanel implements vscode.Disposable {
+    private static instance: AgentPanel | null = null;
+
+    private panel: vscode.WebviewPanel | null = null;
     private active: ActiveTask | null = null;
     private subs: vscode.Disposable[] = [];
     private hostStatusTimer: NodeJS.Timeout | undefined;
 
-    constructor(private readonly deps: AgentViewDeps) {
+    constructor(private readonly deps: AgentPanelDeps) {
         this.subs.push(
             this.deps.permission.onChange((mode) => this.post({ type: 'permission_mode', payload: mode })),
         );
     }
 
-    resolveWebviewView(view: vscode.WebviewView): void {
-        this.view = view;
-        view.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [
-                vscode.Uri.joinPath(this.deps.extensionUri, 'dist'),
-                vscode.Uri.joinPath(this.deps.extensionUri, 'media'),
-                vscode.Uri.joinPath(this.deps.extensionUri, 'resources'),
-            ],
-        };
-        view.webview.html = this.renderHtml(view.webview);
+    static get(deps: AgentPanelDeps): AgentPanel {
+        if (!AgentPanel.instance) {
+            AgentPanel.instance = new AgentPanel(deps);
+        }
+        return AgentPanel.instance;
+    }
 
-        view.webview.onDidReceiveMessage((m: WebviewMessage) => this.handleMessage(m));
-        view.onDidDispose(() => {
-            this.view = null;
-            this.stopHostStatusPolling();
-        });
-        view.onDidChangeVisibility(() => {
-            if (view.visible) {
+    /**
+     * Reveal the panel, creating it if necessary. Always shows in the active
+     * editor group as a tab.
+     */
+    reveal(): void {
+        if (this.panel) {
+            this.panel.reveal(vscode.ViewColumn.Active, false);
+            return;
+        }
+        this.panel = vscode.window.createWebviewPanel(
+            AGENT_PANEL_VIEW_TYPE,
+            'Swirlock Agent',
+            { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [
+                    vscode.Uri.joinPath(this.deps.extensionUri, 'dist'),
+                    vscode.Uri.joinPath(this.deps.extensionUri, 'media'),
+                    vscode.Uri.joinPath(this.deps.extensionUri, 'resources'),
+                ],
+            },
+        );
+        this.panel.iconPath = vscode.Uri.joinPath(this.deps.extensionUri, 'resources', 'swirlock.svg');
+        this.panel.webview.html = this.renderHtml(this.panel.webview);
+
+        const messageSub = this.panel.webview.onDidReceiveMessage((m: WebviewMessage) =>
+            this.handleMessage(m),
+        );
+        const visibleSub = this.panel.onDidChangeViewState(() => {
+            if (this.panel?.visible) {
                 this.startHostStatusPolling();
             } else {
                 this.stopHostStatusPolling();
             }
         });
-        if (view.visible) {
-            this.startHostStatusPolling();
-        }
+        const disposeSub = this.panel.onDidDispose(() => {
+            messageSub.dispose();
+            visibleSub.dispose();
+            disposeSub.dispose();
+            this.stopHostStatusPolling();
+            this.active?.cts.cancel();
+            this.active = null;
+            this.panel = null;
+        });
+        this.startHostStatusPolling();
     }
 
-    /** Bring the panel to the foreground. */
-    async reveal(): Promise<void> {
-        await vscode.commands.executeCommand(`${AGENT_VIEW_ID}.focus`);
-    }
-
-    /** Cancel the active task, if any. Used by the global stop command. */
+    /** Cancel the active task. Returns true if something was cancelled. */
     stopActive(): boolean {
         if (this.active) {
             this.active.cts.cancel();
@@ -87,10 +115,17 @@ export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable 
         return false;
     }
 
+    isOpen(): boolean {
+        return this.panel !== null;
+    }
+
     dispose(): void {
         this.stopHostStatusPolling();
         this.active?.cts.cancel();
         this.subs.forEach((s) => s.dispose());
+        this.panel?.dispose();
+        this.panel = null;
+        AgentPanel.instance = null;
     }
 
     // ---------- webview → extension --------------------------------------
@@ -155,7 +190,6 @@ export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable 
                 await vscode.commands.executeCommand('swirlock-agent.openRunLog');
                 return;
             case 'clear_conversation':
-                // Conversation lives in the webview only; nothing to clear here.
                 return;
             case 'refresh_host':
                 await this.refreshHostStatus();
@@ -201,7 +235,7 @@ export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable 
             this.post({ type: 'task_finished', payload: { taskId, outcome } });
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            log().error(`AgentView task crashed: ${message}`);
+            log().error(`AgentPanel task crashed: ${message}`);
             this.post({
                 type: 'task_finished',
                 payload: { taskId, outcome: { kind: 'error', iterations: 0, message } },
@@ -248,7 +282,7 @@ export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable 
     }
 
     private async refreshHostStatus(): Promise<void> {
-        if (!this.view) {
+        if (!this.panel) {
             return;
         }
         const state = await this.fetchHostState();
@@ -275,8 +309,6 @@ export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable 
         }
     }
 
-    // ---------- init / posting -------------------------------------------
-
     private async sendInit(): Promise<void> {
         const hostStatus = await this.fetchHostState();
         this.post({
@@ -289,7 +321,7 @@ export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable 
     }
 
     private post(msg: ExtensionMessage): void {
-        this.view?.webview.postMessage(msg);
+        this.panel?.webview.postMessage(msg);
     }
 
     // ---------- HTML render ----------------------------------------------
@@ -323,7 +355,7 @@ export class AgentView implements vscode.WebviewViewProvider, vscode.Disposable 
 <div id="root">
   <header>
     <span id="host-status" class="pill">○ checking…</span>
-    <span id="mode-badge" class="pill">🛡 normal</span>
+    <span id="mode-badge" class="pill">⚡ bypass</span>
     <span class="spacer"></span>
     <button id="mode-btn" title="Toggle permission mode">mode</button>
     <button id="preload-btn" title="Preload the configured model">preload</button>

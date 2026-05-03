@@ -55,7 +55,10 @@ const modeBtn = $<HTMLButtonElement>('#mode-btn');
 interface ActiveTask {
     id: string;
     raw: string;
+    thinkingRaw: string;
     bodyEl: HTMLElement;
+    thinkingEl: HTMLElement;
+    markdownEl: HTMLElement;
     actionsEl: HTMLElement;
     pendingActionsByKey: Map<string, HTMLElement>;
 }
@@ -130,13 +133,20 @@ function startAssistantBubble(taskId: string): void {
     msg.dataset.taskId = taskId;
     msg.innerHTML =
         '<div class="msg-header">Swirlock</div>' +
-        '<div class="msg-body"></div>' +
+        '<div class="msg-body">' +
+        '  <details class="thinking-block hidden"><summary>Thinking…</summary><div class="thinking-content"></div></details>' +
+        '  <div class="markdown-content"></div>' +
+        '</div>' +
         '<div class="actions"></div>';
     messagesEl.appendChild(msg);
+    const bodyEl = msg.querySelector('.msg-body') as HTMLElement;
     activeTask = {
         id: taskId,
         raw: '',
-        bodyEl: msg.querySelector('.msg-body') as HTMLElement,
+        thinkingRaw: '',
+        bodyEl,
+        thinkingEl: msg.querySelector('.thinking-block') as HTMLElement,
+        markdownEl: msg.querySelector('.markdown-content') as HTMLElement,
         actionsEl: msg.querySelector('.actions') as HTMLElement,
         pendingActionsByKey: new Map(),
     };
@@ -148,18 +158,19 @@ function appendAssistantChunk(taskId: string, text: string): void {
         startAssistantBubble(taskId);
     }
     activeTask!.raw += text;
-    activeTask!.bodyEl.innerHTML = renderMarkdown(stripActionBlocks(activeTask!.raw));
+    activeTask!.markdownEl.innerHTML = renderMarkdown(stripActionBlocks(activeTask!.raw));
     scrollToBottom();
 }
 
 function appendThinking(taskId: string, text: string): void {
     if (!activeTask || activeTask.id !== taskId) {
-        return;
+        startAssistantBubble(taskId);
     }
-    const node = document.createElement('div');
-    node.className = 'thinking';
-    node.textContent = text;
-    activeTask.bodyEl.appendChild(node);
+    const block = activeTask!.thinkingEl;
+    const content = block.querySelector('.thinking-content') as HTMLElement;
+    activeTask!.thinkingRaw += text;
+    content.textContent = activeTask!.thinkingRaw;
+    block.classList.remove('hidden');
     scrollToBottom();
 }
 
@@ -171,7 +182,7 @@ function appendQueued(taskId: string, position: number, requestsAhead: number, e
     node.className = 'queued';
     const etaText = eta ? ` ~${Math.round(eta / 1000)}s` : '';
     node.textContent = `Queued at position ${position} (${requestsAhead} ahead)${etaText}`;
-    activeTask.bodyEl.appendChild(node);
+    activeTask.bodyEl.insertBefore(node, activeTask.markdownEl);
     scrollToBottom();
 }
 

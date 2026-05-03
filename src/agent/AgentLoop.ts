@@ -106,10 +106,14 @@ export class AgentLoop {
                     },
                 });
 
+                const promptText = request.input.parts
+                    .map((p) => (p.type === 'text' ? p.text : `[${p.type}]`))
+                    .join('\n');
                 await runLog.event('iteration_started', {
                     iteration: iterations,
                     contextTokens: context.totalTokens(),
-                    requestPartCount: request.input.parts.length,
+                    promptChars: promptText.length,
+                    prompt: promptText,
                 });
 
                 sink.progress(`Iteration ${iterations}…`);
@@ -176,16 +180,13 @@ export class AgentLoop {
                 }
 
                 if (parsed.actions.length === 0 && parsed.errors.length === 0) {
-                    context.add({
-                        type: 'system',
-                        priority: 3,
-                        content:
-                            'Your previous reply contained no action blocks. Either emit at least one ' +
-                            '`action` block or a `finish` action. Plain prose without an action is not ' +
-                            'progress.',
-                    });
-                    sink.message('No actions emitted this turn; prompting the model to act.', 'info');
-                    continue;
+                    // Model replied with prose only — treat the whole reply as the
+                    // final answer. Questions like "are you working?" or "summarise
+                    // the codebase" get answered in one iteration without the loop
+                    // re-prompting and re-running the model.
+                    const summary = stripActionBlocksAndTrim(modelText);
+                    await runLog.event('finish_implicit', { summary });
+                    return { kind: 'finished', iterations, summary };
                 }
 
                 let sawFinish: { summary: string } | null = null;
@@ -275,4 +276,11 @@ export class AgentLoop {
                 );
         }
     }
+}
+
+function stripActionBlocksAndTrim(text: string): string {
+    return text
+        .replace(/```action\s*\n[\s\S]*?\n```/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
