@@ -1,23 +1,167 @@
 {
   "name": "swirlock-agent",
-  "displayName": "swirlock-agent",
-  "description": "Local autonomous coding agent using swirlock-llm-host",
+  "displayName": "Swirlock Agent",
+  "description": "Local autonomous coding agent backed by swirlock-llm-host.",
   "version": "0.0.1",
+  "publisher": "swirlock",
   "engines": {
     "vscode": "^1.118.0"
   },
   "categories": [
+    "AI",
+    "Chat",
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
+    "chatParticipants": [
+      {
+        "id": "swirlock-agent.chat",
+        "name": "swirlock",
+        "fullName": "Swirlock Agent",
+        "description": "Local autonomous coding agent",
+        "isSticky": true
+      }
+    ],
     "commands": [
       {
-        "command": "swirlock-agent.helloWorld",
-        "title": "Hello World"
+        "command": "swirlock-agent.stop",
+        "title": "Swirlock: Stop Current Run"
+      },
+      {
+        "command": "swirlock-agent.togglePermissionMode",
+        "title": "Swirlock: Toggle Permission Mode"
+      },
+      {
+        "command": "swirlock-agent.preloadModel",
+        "title": "Swirlock: Preload Model"
+      },
+      {
+        "command": "swirlock-agent.showStatus",
+        "title": "Swirlock: Show Model Status"
+      },
+      {
+        "command": "swirlock-agent.openRunLog",
+        "title": "Swirlock: Open Latest Run Log"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Swirlock Agent",
+      "properties": {
+        "swirlock-agent.host.baseUrl": {
+          "type": "string",
+          "default": "http://localhost:5050",
+          "description": "Base URL of the swirlock-llm-host service. WebSocket endpoint is upgraded from this."
+        },
+        "swirlock-agent.host.modelId": {
+          "type": "string",
+          "default": "",
+          "description": "Override the host's default model. Empty string means use the host default."
+        },
+        "swirlock-agent.host.callerService": {
+          "type": "string",
+          "default": "swirlock-agent",
+          "description": "Logical caller name reported to the model host."
+        },
+        "swirlock-agent.host.priority": {
+          "type": "number",
+          "default": 1,
+          "description": "Numeric priority sent to the model host queue. Higher finite numbers run first."
+        },
+        "swirlock-agent.permissionMode": {
+          "type": "string",
+          "enum": ["normal", "bypass"],
+          "default": "normal",
+          "description": "normal enforces path jail and command policy. bypass disables both. Iteration cap and kill switch always apply."
+        },
+        "swirlock-agent.command.allowList": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "^npm( |$)",
+            "^pnpm( |$)",
+            "^yarn( |$)",
+            "^node( |$)",
+            "^npx( |$)",
+            "^tsc( |$)",
+            "^eslint( |$)",
+            "^prettier( |$)",
+            "^jest( |$)",
+            "^vitest( |$)",
+            "^mocha( |$)",
+            "^pytest( |$)",
+            "^python( |$)",
+            "^pip( |$)",
+            "^cargo( |$)",
+            "^rustc( |$)",
+            "^go( |$)",
+            "^dotnet( |$)",
+            "^git( |$)",
+            "^ls( |$)",
+            "^dir( |$)",
+            "^cat( |$)",
+            "^type( |$)",
+            "^echo( |$)",
+            "^pwd( |$)",
+            "^cd( |$)",
+            "^mkdir( |$)",
+            "^Get-",
+            "^Set-",
+            "^New-Item",
+            "^Test-Path",
+            "^Select-String"
+          ],
+          "description": "Regex patterns. In normal mode, a command must match at least one to run."
+        },
+        "swirlock-agent.command.denyList": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "rm\\s+-rf\\s+/",
+            "rm\\s+-rf\\s+~",
+            ":\\(\\)\\s*\\{",
+            "mkfs",
+            "dd\\s+if=",
+            "shutdown",
+            "reboot",
+            "Format-Volume",
+            "Remove-Item\\s+.*-Recurse.*[A-Za-z]:\\\\\\s*$"
+          ],
+          "description": "Regex patterns. Commands matching any of these are blocked even in bypass mode."
+        },
+        "swirlock-agent.maxIterations": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "description": "Hard maximum number of agent loop iterations per task."
+        },
+        "swirlock-agent.maxContextTokens": {
+          "type": "number",
+          "default": 8000,
+          "minimum": 512,
+          "description": "Token budget for the assembled prompt."
+        },
+        "swirlock-agent.shell": {
+          "type": "string",
+          "enum": ["auto", "pwsh", "powershell", "bash", "sh"],
+          "default": "auto",
+          "description": "Shell used for run_command. auto picks per platform."
+        },
+        "swirlock-agent.runLog.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write a JSONL run log to .swirlock/runs/ for each task."
+        },
+        "swirlock-agent.streaming.showThinking": {
+          "type": "boolean",
+          "default": true,
+          "description": "Surface the model's thinking events in the chat panel."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -30,10 +174,14 @@
     "lint": "eslint src",
     "test": "vscode-test"
   },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "devDependencies": {
     "@types/vscode": "^1.118.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
+    "@types/ws": "^8.5.13",
     "typescript-eslint": "^8.56.1",
     "eslint": "^9.39.3",
     "typescript": "^5.9.3",
