@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { AgentLoop } from '../agent/AgentLoop';
 import { AgentSink } from '../agent/AgentSink';
 import { ContextManager } from '../context/ContextManager';
-import { Plan } from '../agent/Plan';
+import { WorkingState } from '../agent/WorkingState';
 import { ModelHostClient } from '../transport/ModelHostClient';
 import { PermissionModeController } from '../safety/permissionMode';
 import { RunLogger, trackLog } from './RunLogger';
@@ -52,9 +52,12 @@ export class AgentPanel implements vscode.Disposable {
      * user prompts so the model sees previous turns ("was he married?"
      * resolves "he" against the previous answer). Reset on clear or panel
      * disposal.
+     *
+     * Tier 3 (rolling transcript) is `context`. Tier 2 (plan, todos, active
+     * files) is `workingState`.
      */
     private context = new ContextManager();
-    private plan = new Plan();
+    private workingState = new WorkingState();
 
     constructor(private readonly deps: AgentPanelDeps) {
         this.subs.push(
@@ -134,7 +137,7 @@ export class AgentPanel implements vscode.Disposable {
     private resetSession(): void {
         this.active?.cts.cancel();
         this.context = new ContextManager();
-        this.plan = new Plan();
+        this.workingState = new WorkingState();
     }
 
     dispose(): void {
@@ -247,7 +250,7 @@ export class AgentPanel implements vscode.Disposable {
             const outcome = await this.deps.loop.run({
                 task: prompt,
                 context: this.context,
-                plan: this.plan,
+                workingState: this.workingState,
                 correlationId,
                 sink,
                 token: cts.token,

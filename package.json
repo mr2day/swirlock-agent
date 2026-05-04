@@ -2,7 +2,7 @@
   "name": "swirlock-agent",
   "displayName": "Swirlock Agent",
   "description": "Local autonomous coding agent backed by swirlock-llm-host.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "swirlock",
   "repository": {
     "type": "git",
@@ -214,9 +214,47 @@
         },
         "swirlock-agent.maxContextTokens": {
           "type": "number",
+          "default": 32000,
+          "minimum": 2000,
+          "description": "Total token budget for the assembled prompt across all three tiers (static, working state, rolling transcript)."
+        },
+        "swirlock-agent.budgets.projectMemoryTokens": {
+          "type": "number",
+          "default": 4000,
+          "description": "Tier 1 cap for .swirlock/AGENT.md project memory."
+        },
+        "swirlock-agent.budgets.repoMapTokens": {
+          "type": "number",
+          "default": 1500,
+          "description": "Tier 1 cap for the repo map (directory listing of source files)."
+        },
+        "swirlock-agent.budgets.activeFilesTokens": {
+          "type": "number",
           "default": 8000,
-          "minimum": 512,
-          "description": "Token budget for the assembled prompt."
+          "description": "Tier 2 cap for the active file set (latest content of files in scope)."
+        },
+        "swirlock-agent.budgets.todosTokens": {
+          "type": "number",
+          "default": 500,
+          "description": "Tier 2 cap for the TODO list."
+        },
+        "swirlock-agent.budgets.planTokens": {
+          "type": "number",
+          "default": 1000,
+          "description": "Tier 2 cap for the plan."
+        },
+        "swirlock-agent.budgets.compactionThreshold": {
+          "type": "number",
+          "default": 0.75,
+          "minimum": 0.5,
+          "maximum": 0.95,
+          "description": "Fraction of the transcript sub-budget that triggers LLM-based compaction of older middle entries."
+        },
+        "swirlock-agent.budgets.keepRecentTurns": {
+          "type": "number",
+          "default": 6,
+          "minimum": 2,
+          "description": "Number of recent transcript turns kept verbatim across compaction."
         },
         "swirlock-agent.shell": {
           "type": "string",

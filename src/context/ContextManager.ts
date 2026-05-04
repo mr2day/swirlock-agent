@@ -8,17 +8,28 @@ export interface AddEntryInput {
     priority: Priority;
     source?: string;
     pinned?: boolean;
+    dedupKey?: string;
 }
 
 /**
- * Holds the conversation/working set for a single agent task. Sorts and
- * trims entries to fit a token budget when asked, but never mutates the
- * stored set silently.
+ * Tier 3 — the rolling conversation transcript.
+ *
+ * Holds tool results that are NOT files (those go to ActiveFiles), assistant
+ * replies, user prompts, errors, and compaction summaries. Provides the
+ * deterministic compaction primitives the agent loop calls every turn:
+ *
+ *   - dedupBy(key)            replace prior entries with same key by a stub
+ *   - markObsolete(predicate) replace specific entries by a stub
+ *   - middleRange(keepRecent) identify the eligible-for-summarisation range
+ *   - replaceRange(...)       fold a range into a single summary entry
  */
 export class ContextManager {
     private entries: ContextEntry[] = [];
 
     add(input: AddEntryInput): ContextEntry {
+        if (input.dedupKey) {
+            this.dedupBy(input.dedupKey);
+        }
         const entry: ContextEntry = {
             id: uuidv7(),
             type: input.type,
@@ -28,14 +39,10 @@ export class ContextManager {
             createdAt: Date.now(),
             tokenEstimate: estimateTokens(input.content),
             pinned: input.pinned ?? false,
+            dedupKey: input.dedupKey,
         };
         this.entries.push(entry);
         return entry;
-    }
-
-    replaceByType(type: EntryType, input: AddEntryInput): ContextEntry {
-        this.entries = this.entries.filter((e) => e.type !== type);
-        return this.add(input);
     }
 
     all(): readonly ContextEntry[] {
@@ -61,21 +68,111 @@ export class ContextManager {
     }
 
     /**
-     * Return entries fitting within `budget` tokens, ordered for prompt
-     * assembly: system first, then plan, then task, then everything else
-     * in chronological order. Pinned entries and the highest-priority bands
-     * are kept; lower priorities are dropped first, then oldest non-pinned
-     * entries.
+     * Replace any prior entries that share the given dedup key with a short
+     * "[superseded]" stub. Cheap, deterministic — same technique Cline uses
+     * to free tokens without breaking message indices.
+     */
+    dedupBy(key: string): number {
+        let n = 0;
+        for (const e of this.entries) {
+            if (e.dedupKey === key && !e.obsoleted) {
+                e.content = `[superseded — see later entry]`;
+                e.tokenEstimate = estimateTokens(e.content);
+                e.obsoleted = true;
+                e.priority = 0;
+                e.pinned = false;
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * Mark prior entries matching a predicate as stale. Used when an edit
+     * invalidates an earlier read of the same file.
+     */
+    markStale(predicate: (e: ContextEntry) => boolean, marker: string): number {
+        let n = 0;
+        for (const e of this.entries) {
+            if (!e.obsoleted && predicate(e)) {
+                e.content = `[stale — ${marker}]`;
+                e.tokenEstimate = estimateTokens(e.content);
+                e.obsoleted = true;
+                e.priority = 0;
+                e.pinned = false;
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * Drop entries already obsoleted whose stub content adds nothing useful.
+     * Called periodically to compact the entry list itself.
+     */
+    purgeObsolete(): number {
+        const before = this.entries.length;
+        this.entries = this.entries.filter((e) => !e.obsoleted || e.pinned);
+        return before - this.entries.length;
+    }
+
+    /**
+     * Identify the range of entries eligible for LLM summarisation: skip
+     * the first user task (anchor) and the last `keepRecent` non-system
+     * entries (recent context). Returns the slice of entries between them.
+     */
+    middleRange(keepRecent: number): { start: number; end: number; entries: ContextEntry[] } {
+        const indices: number[] = [];
+        for (let i = 0; i < this.entries.length; i++) {
+            const e = this.entries[i];
+            if (e.type === 'system' || e.pinned || e.obsoleted) {
+                continue;
+            }
+            indices.push(i);
+        }
+        if (indices.length <= keepRecent + 1) {
+            return { start: -1, end: -1, entries: [] };
+        }
+        // Skip first eligible entry (anchor) and last `keepRecent` (recent).
+        const middleIdx = indices.slice(1, indices.length - keepRecent);
+        if (middleIdx.length === 0) {
+            return { start: -1, end: -1, entries: [] };
+        }
+        const start = middleIdx[0];
+        const end = middleIdx[middleIdx.length - 1];
+        const entries = middleIdx.map((i) => this.entries[i]);
+        return { start, end, entries };
+    }
+
+    /**
+     * Replace a slice of entries with a single summary entry. Used by the
+     * Compactor after an LLM summary is produced.
+     */
+    replaceRange(start: number, end: number, summary: string): void {
+        const entry: ContextEntry = {
+            id: uuidv7(),
+            type: 'summary',
+            content: summary,
+            priority: 2,
+            source: 'compactor',
+            createdAt: Date.now(),
+            tokenEstimate: estimateTokens(summary),
+        };
+        this.entries.splice(start, end - start + 1, entry);
+    }
+
+    /**
+     * Return entries fitting within `budget` tokens for prompt rendering.
+     * Pinned + priority-3 entries are kept regardless. Among the rest, the
+     * newest are preferred. Render order: system → plan → everything else
+     * by createdAt asc (chronological transcript).
      */
     selectForBudget(budget: number): ContextEntry[] {
-        // Step 1: bucket by priority. Always keep pinned + priority 3.
         const sorted = [...this.entries];
-        // Drop until under budget.
         const totalTokens = (xs: ContextEntry[]) => xs.reduce((a, b) => a + b.tokenEstimate, 0);
 
         const pinned = sorted.filter((e) => e.pinned || e.priority === 3);
         const candidates = sorted.filter((e) => !(e.pinned || e.priority === 3));
-        // Sort candidates: highest priority first, newest first within priority.
         candidates.sort((a, b) => {
             if (a.priority !== b.priority) {
                 return b.priority - a.priority;
@@ -94,9 +191,6 @@ export class ContextManager {
         }
 
         const final = [...pinned, ...kept];
-        // Render order: system → plan → everything else chronological. Tasks
-        // and assistant replies interleave by creation time so multi-turn
-        // conversations read as a transcript instead of all-tasks-first.
         const orderRank = (t: EntryType): number => {
             switch (t) {
                 case 'system':

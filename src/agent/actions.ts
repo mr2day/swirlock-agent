@@ -49,6 +49,22 @@ export interface UpdatePlanAction {
     type: 'update_plan';
     plan: string;
 }
+export interface TodoUpdateItem {
+    id?: string;
+    text: string;
+    status?: 'pending' | 'in_progress' | 'completed';
+}
+export interface UpdateTodosAction {
+    type: 'update_todos';
+    todos: TodoUpdateItem[];
+}
+export interface DelegateAction {
+    type: 'delegate';
+    /** Self-contained instruction the child agent runs to completion. */
+    task: string;
+    /** Optional scope hint (e.g. paths, modules) appended to the child's task. */
+    scope?: string;
+}
 export interface FinishAction {
     type: 'finish';
     summary: string;
@@ -63,6 +79,8 @@ export type Action =
     | RunCommandAction
     | GitAction
     | UpdatePlanAction
+    | UpdateTodosAction
+    | DelegateAction
     | FinishAction;
 
 export type ActionType = Action['type'];
@@ -79,6 +97,13 @@ export const ACTION_SCHEMA_DOC = `
                   Background commands open a VS Code terminal the user can see and return immediately.
 - git             { "type": "git", "args": ["status"] }
 - update_plan     { "type": "update_plan", "plan": "<markdown plan>" }
+- update_todos    { "type": "update_todos", "todos": [{ "id": "<optional, echo to keep>", "text": "<…>", "status": "pending|in_progress|completed" }, …] }
+                  Overwrites the entire TODO list. Echo existing ids to preserve them across edits.
+- delegate        { "type": "delegate", "task": "<self-contained instruction>", "scope": "<optional hint>" }
+                  Spawn a child agent with isolated context. Useful for big read-heavy work
+                  ("search the repo for X", "audit all auth tests"). Returns the child's
+                  finish summary as a tool result; the child's intermediate steps don't
+                  pollute the parent's context.
 - finish          { "type": "finish", "summary": "<one-paragraph result>" }
 `.trim();
 
@@ -216,6 +241,48 @@ function validate(v: unknown): Validation {
             }
             case 'update_plan':
                 return { ok: true, action: { type: t, plan: reqString('plan') } };
+            case 'update_todos': {
+                const arr = obj.todos;
+                if (!Array.isArray(arr)) {
+                    return { ok: false, error: 'Field "todos" must be an array.' };
+                }
+                const todos: TodoUpdateItem[] = [];
+                for (let idx = 0; idx < arr.length; idx++) {
+                    const item = arr[idx];
+                    if (!item || typeof item !== 'object') {
+                        return { ok: false, error: `todos[${idx}] must be an object.` };
+                    }
+                    const it = item as Record<string, unknown>;
+                    if (typeof it.text !== 'string') {
+                        return { ok: false, error: `todos[${idx}].text must be a string.` };
+                    }
+                    if (it.id !== undefined && typeof it.id !== 'string') {
+                        return { ok: false, error: `todos[${idx}].id must be a string when present.` };
+                    }
+                    if (
+                        it.status !== undefined &&
+                        it.status !== 'pending' &&
+                        it.status !== 'in_progress' &&
+                        it.status !== 'completed'
+                    ) {
+                        return {
+                            ok: false,
+                            error: `todos[${idx}].status must be pending|in_progress|completed when present.`,
+                        };
+                    }
+                    todos.push({
+                        id: it.id as string | undefined,
+                        text: it.text,
+                        status: it.status as TodoUpdateItem['status'],
+                    });
+                }
+                return { ok: true, action: { type: t, todos } };
+            }
+            case 'delegate':
+                return {
+                    ok: true,
+                    action: { type: t, task: reqString('task'), scope: optString('scope') },
+                };
             case 'finish':
                 return { ok: true, action: { type: t, summary: reqString('summary') } };
             default:

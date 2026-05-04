@@ -5,7 +5,8 @@ export type EntryType =
     | 'file'
     | 'tool_result'
     | 'assistant'
-    | 'error';
+    | 'error'
+    | 'summary';
 
 /**
  * Priority bands. Lower numbers are dropped first when the budget is tight.
@@ -26,4 +27,15 @@ export interface ContextEntry {
     tokenEstimate: number;
     /** Marks an entry that must always be kept (system, current task). */
     pinned?: boolean;
+    /**
+     * Deduplication key. When a new entry is added with the same dedupKey,
+     * older entries with that key are rewritten to a "[superseded]" stub.
+     */
+    dedupKey?: string;
+    /**
+     * Set when an earlier entry has been deterministically obsoleted by a
+     * later one (file edited, tool result superseded, summarised by the
+     * compactor). The full content has been replaced with a short marker.
+     */
+    obsoleted?: boolean;
 }
