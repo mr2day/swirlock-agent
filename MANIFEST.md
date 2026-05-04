@@ -155,7 +155,7 @@ All configuration is exposed under `swirlock-agent.*` in VS Code settings. The d
 
 | Setting | Default |
 |---|---|
-| `host.baseUrl` | `http://localhost:3000` |
+| `host.baseUrl` | `http://localhost:3213` |
 | `host.modelId` | `""` (use host default) |
 | `host.callerService` | `swirlock-agent` |
 | `host.priority` | `1` |

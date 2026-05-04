@@ -78,7 +78,7 @@
       "properties": {
         "swirlock-agent.host.baseUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
+          "default": "http://localhost:3213",
           "description": "Base URL of the swirlock-llm-host service. WebSocket endpoint is upgraded from this."
         },
         "swirlock-agent.host.modelId": {

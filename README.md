@@ -12,7 +12,7 @@ Active development. Transport, agent loop, tool layer, and the dedicated webview
 
 - Visual Studio Code 1.118 or newer.
 - Node.js 20+ (for building).
-- A reachable `swirlock-llm-host` instance implementing the **v2 Model Host API**. Default endpoint is `http://localhost:3000` (the local convention from the contracts repo).
+- A reachable `swirlock-llm-host` instance implementing the **v2 Model Host API**. Default endpoint is `http://localhost:3213` (the local convention from the contracts repo).
 - A loaded model on the host (e.g. `gemma4:e4b`). Click **preload** in the panel header to warm it up before the first task.
 
 ## Install
@@ -59,7 +59,7 @@ All settings live under `swirlock-agent.*`:
 
 | Setting | Default | Notes |
 |---|---|---|
-| `host.baseUrl` | `http://localhost:3000` | Base URL of `swirlock-llm-host`. WebSocket is upgraded from this. |
+| `host.baseUrl` | `http://localhost:3213` | Base URL of `swirlock-llm-host`. WebSocket is upgraded from this. |
 | `host.modelId` | `""` | Empty means "use the host's default model." Set to override. |
 | `host.callerService` | `swirlock-agent` | Identity sent in `requestContext.callerService`. |
 | `host.priority` | `1` | Numeric priority sent to the host queue. Higher runs first. |
