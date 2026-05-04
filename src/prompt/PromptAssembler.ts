@@ -71,13 +71,13 @@ export class PromptAssembler {
         const src = entry.source ? ` (${entry.source})` : '';
         switch (entry.type) {
             case 'task':
-                return `=== USER TASK ===`;
+                return `=== USER ===`;
             case 'file':
                 return `=== FILE${src} ===`;
             case 'tool_result':
                 return `=== TOOL RESULT${src} ===`;
             case 'assistant':
-                return `=== ASSISTANT (previous turn) ===`;
+                return `=== ASSISTANT ===`;
             case 'error':
                 return `=== ERROR${src} ===`;
             case 'plan':

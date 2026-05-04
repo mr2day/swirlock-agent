@@ -3,6 +3,8 @@
 out/**
 node_modules/**
 src/**
+.swirlock/**
+*.vsix
 .gitignore
 .yarnrc
 webpack.config.js

@@ -30,6 +30,10 @@ export interface AgentLoopDeps {
 
 export interface AgentRunOptions {
     task: string;
+    /** Long-lived conversation context. Caller owns it across turns. */
+    context: ContextManager;
+    /** Long-lived plan. Caller owns it across turns. */
+    plan: Plan;
     correlationId?: string;
     sink: AgentSink;
     token: vscode.CancellationToken;
@@ -55,13 +59,15 @@ export class AgentLoop {
     }
 
     async run(opts: AgentRunOptions): Promise<AgentOutcome> {
-        const { task, sink, token, runLog } = opts;
+        const { task, context, plan, sink, token, runLog } = opts;
         const correlationId = opts.correlationId ?? uuidv7();
 
-        const context = new ContextManager();
-        const plan = new Plan();
         const assembler = new PromptAssembler(context);
 
+        // Demote any previous "current task" entry so it stops being pinned at
+        // top priority. The new task takes its place; the old one lives on as
+        // conversation history at normal priority and may be evicted later.
+        context.demoteOldTasks();
         context.add({
             type: 'task',
             content: task,

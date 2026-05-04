@@ -2,7 +2,7 @@
   "name": "swirlock-agent",
   "displayName": "Swirlock Agent",
   "description": "Local autonomous coding agent backed by swirlock-llm-host.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "swirlock",
   "repository": {
     "type": "git",

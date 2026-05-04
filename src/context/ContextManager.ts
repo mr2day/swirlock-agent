@@ -47,6 +47,20 @@ export class ContextManager {
     }
 
     /**
+     * When a new user task arrives, the previous "current task" entry should
+     * stop being pinned at top priority — it becomes part of the rolling
+     * conversation history. Called before adding the new task.
+     */
+    demoteOldTasks(): void {
+        for (const e of this.entries) {
+            if (e.type === 'task' && (e.pinned || e.priority > 1)) {
+                e.pinned = false;
+                e.priority = 1;
+            }
+        }
+    }
+
+    /**
      * Return entries fitting within `budget` tokens, ordered for prompt
      * assembly: system first, then plan, then task, then everything else
      * in chronological order. Pinned entries and the highest-priority bands
@@ -80,17 +94,17 @@ export class ContextManager {
         }
 
         const final = [...pinned, ...kept];
-        // Render order: system → plan → task → others by createdAt asc.
+        // Render order: system → plan → everything else chronological. Tasks
+        // and assistant replies interleave by creation time so multi-turn
+        // conversations read as a transcript instead of all-tasks-first.
         const orderRank = (t: EntryType): number => {
             switch (t) {
                 case 'system':
                     return 0;
                 case 'plan':
                     return 1;
-                case 'task':
-                    return 2;
                 default:
-                    return 3;
+                    return 2;
             }
         };
         final.sort((a, b) => {

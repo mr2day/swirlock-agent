@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
 import { AgentLoop } from '../agent/AgentLoop';
 import { AgentSink } from '../agent/AgentSink';
+import { ContextManager } from '../context/ContextManager';
+import { Plan } from '../agent/Plan';
 import { ModelHostClient } from '../transport/ModelHostClient';
 import { PermissionModeController } from '../safety/permissionMode';
 import { RunLogger, trackLog } from './RunLogger';
@@ -44,6 +46,15 @@ export class AgentPanel implements vscode.Disposable {
     private active: ActiveTask | null = null;
     private subs: vscode.Disposable[] = [];
     private hostStatusTimer: NodeJS.Timeout | undefined;
+
+    /**
+     * Long-lived conversation state for this panel session. Persists across
+     * user prompts so the model sees previous turns ("was he married?"
+     * resolves "he" against the previous answer). Reset on clear or panel
+     * disposal.
+     */
+    private context = new ContextManager();
+    private plan = new Plan();
 
     constructor(private readonly deps: AgentPanelDeps) {
         this.subs.push(
@@ -99,7 +110,7 @@ export class AgentPanel implements vscode.Disposable {
             visibleSub.dispose();
             disposeSub.dispose();
             this.stopHostStatusPolling();
-            this.active?.cts.cancel();
+            this.resetSession();
             this.active = null;
             this.panel = null;
         });
@@ -117,6 +128,13 @@ export class AgentPanel implements vscode.Disposable {
 
     isOpen(): boolean {
         return this.panel !== null;
+    }
+
+    /** Wipe conversation state and start fresh. Active task is cancelled. */
+    private resetSession(): void {
+        this.active?.cts.cancel();
+        this.context = new ContextManager();
+        this.plan = new Plan();
     }
 
     dispose(): void {
@@ -190,6 +208,7 @@ export class AgentPanel implements vscode.Disposable {
                 await vscode.commands.executeCommand('swirlock-agent.openRunLog');
                 return;
             case 'clear_conversation':
+                this.resetSession();
                 return;
             case 'refresh_host':
                 await this.refreshHostStatus();
@@ -227,6 +246,8 @@ export class AgentPanel implements vscode.Disposable {
         try {
             const outcome = await this.deps.loop.run({
                 task: prompt,
+                context: this.context,
+                plan: this.plan,
                 correlationId,
                 sink,
                 token: cts.token,
